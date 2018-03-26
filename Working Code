@@ -1,0 +1,361 @@
+Valeryia Zaitsava 
+Data Analytics Capstone - Ryerson University Detecting Fake Reviews
+
+#For my capstone analytics project, I'll be using a dataset of Yelp reviews to see if I can identify opinion spam candidates, 
+also known as fake reviews. The data comes from from Kaggle: https://www.kaggle.com/yelp-dataset/yelp-dataset/data called
+'yelp_review.csv', and is 3.53 GB. The size of the dataset presents a challenge, especially because I need to first hand-label 
+training data of 1000 fake and 1000 real reviews.
+
+#First I import libraries and prepare the environment:
+
+In [ ]:
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+from pandas import Series, DataFrame
+from pandas.tools.plotting import scatter_matrix
+import matplotlib.pyplot as plt
+from pylab import rcParams
+import seaborn as sb
+import dateutil
+import nltk
+from re import sub, compile
+from sklearn import metrics, model_selection
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+from sklearn.svm import SVC
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.preprocessing import normalize
+import gensim
+from gensim.models import LdaModel, LsiModel
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.model_selection import StratifiedKFold
+from sklearn import metrics, cross_validation
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+import sys
+import os
+
+%matplotlib inline
+rcParams['figure.figsize'] = 5, 4
+sb.set_style('whitegrid')
+
+import logging
+logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
+Now load data from CSV file and check its structure
+In [13]:
+df = pd.read_csv("C:/Users/vzaitsava/Desktop/yelp_review.csv")
+In [14]:
+df.columns =['review_id','user_id','business_id','stars','date','text','useful','funny','cool']
+In [15]:
+df.head()
+Out[15]:
+review_id	user_id	business_id	stars	date	text	useful	funny	cool
+0	vkVSCC7xljjrAI4UGfnKEQ	bv2nCi5Qv5vroFiqKGopiw	AEx2SYEUJmTxVVB18LlCwA	5	2016-05-28	Super simple place but amazing nonetheless. It...	0	0	0
+1	n6QzIUObkYshz4dz2QRJTw	bv2nCi5Qv5vroFiqKGopiw	VR6GpWIda3SfvPC-lg9H3w	5	2016-05-28	Small unassuming place that changes their menu...	0	0	0
+2	MV3CcKScW05u5LVfF6ok0g	bv2nCi5Qv5vroFiqKGopiw	CKC0-MOWMqoeWf6s-szl8g	5	2016-05-28	Lester's is located in a beautiful neighborhoo...	0	0	0
+3	IXvOzsEMYtiJI0CARmj77Q	bv2nCi5Qv5vroFiqKGopiw	ACFtxLv8pGrrxMm6EgjreA	4	2016-05-28	Love coming here. Yes the place always needs t...	0	0	0
+4	L_9BTb55X0GDtThi6GlZ6w	bv2nCi5Qv5vroFiqKGopiw	s2I_Ni76bjJNK9yG60iD-Q	4	2016-05-28	Had their chocolate almond croissant and it wa...	0	0	0
+In [24]:
+print(df.info())
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 5261668 entries, 0 to 5261667
+Data columns (total 9 columns):
+review_id      object
+user_id        object
+business_id    object
+stars          int64
+date           object
+text           object
+useful         int64
+funny          int64
+cool           int64
+dtypes: int64(4), object(5)
+memory usage: 361.3+ MB
+None
+In [20]:
+df['review_id'].count()
+Out[20]:
+5261668
+In [21]:
+df['user_id'].nunique()
+Out[21]:
+1326101
+
+So the dataset contains 5,261,668 reviews by 1,326,101 reviewers. There are no null values, but let check dates and convert them
+to datetime.
+In [32]:
+df['date'] = df['date'].apply(dateutil.parser.parse, dayfirst=True)
+In [34]:
+print(df.info())
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 5261668 entries, 0 to 5261667
+Data columns (total 9 columns):
+review_id      object
+user_id        object
+business_id    object
+stars          int64
+date           datetime64[ns]
+text           object
+useful         int64
+funny          int64
+cool           int64
+dtypes: datetime64[ns](1), int64(4), object(4)
+memory usage: 361.3+ MB
+None
+
+It worked, now 'date' column is datetime64[ns] type.
+From literature review I found that reviewers who post more than 3-5 times per day are strong candidates for being opinion spammers.
+Legitimate reviews rarely post more than 1-2 reviews per day. Therefore I need to group my data by user_id and calculate how many
+times on average they post per day, organizing my new dataframe as follows:
+| user_id | avg_daily_review_rate |
+
+Then I can identify top frequent daily reviewers and look at their individual reviews more in-depth to see if I can hand-label them
+as fake. After I can look at low daily posters and their reviews, for creating potential 'true' review labels.
+First, calculate reviewer's average daily review rate and save in a pandas Series.
+
+In [75]:
+users_reviews = df.groupby((['user_id','date']), as_index=False).count()
+avg_daily_review_rate = users_reviews.groupby('user_id')['review_id'].mean()
+
+In [76]:
+avg_daily_review_rate.head()
+Out[76]:
+user_id
+---1lKK3aKOuomHnwAkAow    2.333333
+---94vtJ_5o_nikEs6hUjg    1.000000
+---PLwSf5gKdIoVnyRHgBA    1.000000
+---cu1hq55BP9DWVXXKHZg    1.000000
+---fhiwiwBYrvqhpXgcWDQ    1.000000
+Name: review_id, dtype: float64
+
+In [82]:
+avg_daily_review_rate.sort_values(ascending=False)
+Out[82]:
+user_id
+_0TKEDIcuWW5Y4BHo1t24g    45.0
+3LW_w3POTvwjl0gY-rHmmw    44.0
+ySM2hhVvRKlEfgw9480yng    38.0
+szUqQBw8Xl5RExjRqTQsoQ    37.0
+JwLgaFivbSO0prsju8H9KQ    34.5
+CqAFnIa7AKD-ey-aCsIN4Q    34.0
+gYzZc_9kk-JJEL1uGIr2AA    34.0
+09_FFRjVsCc7pbqG7MxXyA    32.0
+y81808aeGu5YuZSaDiFC8A    31.0
+iAfBmkVdzVJFz1lprDG2BQ    28.0
+os832o4NXDKxcTYEBN1Mmg    28.0
+Cm3jrFTO6vQghQMc52MDvQ    28.0
+NzdarpPuQ6-U7zjM2qxvbA    26.0
+q5R39EeDXWg32KghCsmBmg    26.0
+vu-TYeqiWnC1duFo4XcWRA    26.0
+iBofWBmQqEnXJAzQVuhS7Q    26.0
+8RcEwGrFIgkt9WQ35E6SnQ    25.0
+_y4oXrnhbWb9h9-SZPOGLA    24.0
+-24B_nkBG6Et1_QJecnN2A    24.0
+nj-3QeJ1MiGvird7hG-Nmg    24.0
+XDnlriVXnZgFYXHqphBJ3g    24.0
+4wOcvMLtU6a9Lslggq74Vg    24.0
+l8gCfUNUdO64TtIv71UUaA    23.5
+gVbGtb0ddk3VIF50YGLWug    22.0
+40YlVRxKpRIU06snsXFhiQ    22.0
+UUa4tSTKz90v71BWZF6rnQ    21.0
+LfWuALtU_jW51u7RU8X7rg    21.0
+k2t-xCELlWanDIBPp5oEyg    21.0
+LH7Ri2KjnQoQCfrs5arTTw    21.0
+KbLfnuqdsaIq8lB7vhwAVg    21.0
+                          ... 
+biznPa8rndr30BK-OYQcHA     1.0
+bizd2OBcVFFF1uR_OOYE2Q     1.0
+bizTEzY-RaXBqu4wjwmPsA     1.0
+bizAT0slkN4NUzdNw1C5OQ     1.0
+biz4__BFZQ8Db3R91aU3KA     1.0
+biymfENdbU2ECcgRdRhROw     1.0
+biyeWVagjiV_58pK0SbP3A     1.0
+biybx0ZM6RgAUXlwJ-azkw     1.0
+biyTYBmXrhUlivZOfVTnAQ     1.0
+biy-sCu-kTPavvx_nf9nhg     1.0
+bixMcGuMhcE-XVNfCjrOkQ     1.0
+biwsr4tQi5KzosfnJUN1VA     1.0
+biwb524Z-U_T-L2tgTuBOw     1.0
+biwCpxvPO3xJcqulLMKi4Q     1.0
+bisGnEDxpbRv9eJWoxhisg     1.0
+biw4BWVAoGcEMrq-RhF5CA     1.0
+bivopvZqNN--rT3r5GAfdw     1.0
+bivi7pmYHw2dkI1AIkFn1Q     1.0
+bivVOgXJF90KqVSFmvk7CQ     1.0
+biuo51IR0BgacIz4CvwoYQ     1.0
+biuApxCuCZXKXzlSiOOD8Q     1.0
+biuAj3D0X63QTdtw3oekAA     1.0
+bitsgkDwFMDWeRQnf_72cg     1.0
+bitVX5TsZBJ_fwK33Ee8Eg     1.0
+bitGgg88KE52Pb377hFaJg     1.0
+bisxddcPXgaPie_qGB_VUQ     1.0
+bisivIgJh5FSWojwA8VUWw     1.0
+biscPJtxxNRpex0UHQyWnQ     1.0
+bisPDTTgWOZowY-TrcP4Pw     1.0
+UyeWPntJbCiivtpOkkuEcg     1.0
+Name: review_id, Length: 1326101, dtype: float64
+
+Top daily poster has 45 reviews/day on average. Lowest are at 1/day. Next I'm going to take a look at the reviews 
+with more than 10 reviews per day to see if I can label their reviews as fake.
+
+In [83]:
+df[df['user_id'] == '_0TKEDIcuWW5Y4BHo1t24g']
+Out[83]:
+review_id	user_id	business_id	stars	date	text	useful	funny	cool
+3440771	M6-isJkcNwKyRjWQ0HV5cA	_0TKEDIcuWW5Y4BHo1t24g	NcNzTKVatkbRkD_G8A891A	3	2014-09-13	It's pretty good but a little too pricey. The...	0	0	0
+3440772	S_bAcDjztyHyYj4ectpXfw	_0TKEDIcuWW5Y4BHo1t24g	MtjOk7u7sp3yWyzscAIG4Q	5	2014-09-13	I really like the sandwiches and fries. The p...	0	0	0
+3440773	iIZJykODmOjFvg0SnkyKlQ	_0TKEDIcuWW5Y4BHo1t24g	VxRlBe2wjtycFWSZm1orTA	5	2014-09-13	Love it. It's hard to resist the Fish and Chi...	0	0	0
+3440774	5vvtC33vV5a_jUUV8OXaqg	_0TKEDIcuWW5Y4BHo1t24g	TpZO3sokGBg8mDYyTRiGiQ	4	2014-09-13	Good food but it's hard to eat there on a budg...	0	0	0
+3440775	JJHRUEGjpSbo3DDvVQ0fFw	_0TKEDIcuWW5Y4BHo1t24g	04kZ5CSh6oKhI5huU5bLdg	4	2014-09-13	The beer list used to be unrivaled in Pittsbur...	0	0	0
+3440776	w-GOvipPIc5S70W6ztmT-g	_0TKEDIcuWW5Y4BHo1t24g	7aZf5c1UNotq4MabBXMZLA	5	2014-09-13	Great overlooked Chinese place in Squill. It'...	0	0	0
+3440777	S0Kni4Kqs5NzfJfwBib2Jw	_0TKEDIcuWW5Y4BHo1t24g	J9f-9Prw2YVM-fiZqv2fmQ	2	2014-09-13	Awful hot dogs, greasy ass carnie fries that a...	0	0	0
+3440778	pCvAERNXNMm2WvxphuMAZA	_0TKEDIcuWW5Y4BHo1t24g	Zja7ykq3icDzkN20XX6j1w	5	2014-09-13	Way better than Mineos. A slicer of Pepperoni...	0	0	0
+3440779	W_PHAJ3DEU50t4GnBpb1sQ	_0TKEDIcuWW5Y4BHo1t24g	iK_3WktnHa_YlbWdA0Axkw	5	2014-09-13	Loved it. Nice little secret in a crummy area...	0	0	0
+3440780	tanWeoTD3dWXw0CMnvKIlQ	_0TKEDIcuWW5Y4BHo1t24g	RThuRlhMdowhtY8vITEIzQ	1	2014-09-13	Worst & most overrated Pizza in the 'Burgh. P...	1	0	1
+3440781	5KSOnL3smj_fBCcEdiMxVg	_0TKEDIcuWW5Y4BHo1t24g	S8VRQCBrbZI04zjCOc1RAA	5	2014-09-13	Two dollar authentic tacos seven days a week w...	0	0	0
+3440782	-gybE83bVC51sUmmJBMsOA	_0TKEDIcuWW5Y4BHo1t24g	gaDAgdozCoSRN23WU4PolA	5	2014-09-13	It's hard to find out where they're going to b...	0	0	0
+3440783	zJ-lf2UGv-5X99bLabfH2A	_0TKEDIcuWW5Y4BHo1t24g	BIqsItY0vyOshMpJ0I4cPg	5	2014-09-13	Great authentic menu & their American Chinese ...	0	0	0
+3440784	vB9DVLh5yKvrmMxi3jwNFw	_0TKEDIcuWW5Y4BHo1t24g	7wMB3wMbOp0gq3l6nHfOaA	4	2014-09-13	Pretty good ramen place. The menu doesn't dis...	0	0	0
+3440785	q3ehIzmG5g7C5D5QBxkjMQ	_0TKEDIcuWW5Y4BHo1t24g	sMzNLdhJZGzYirIWt-fMAg	5	2014-09-13	I like to get a salad with some meatbals and f...	0	0	0
+3440786	nQeFNBVCMmLaF-kxLMZ3sQ	_0TKEDIcuWW5Y4BHo1t24g	XItYW5ul3OW_AqpT2nDbBQ	5	2014-09-13	If you love point brugge, you're going to love...	0	0	0
+3440787	uSvnktoGThhXXodow5zBYw	_0TKEDIcuWW5Y4BHo1t24g	CK-Gv3vqIlWOrKP4fhT8_g	4	2014-09-13	It's pretty good bar food, but usually you end...	0	0	0
+3440788	VF1lzbJre3Feqv6OLzzX8A	_0TKEDIcuWW5Y4BHo1t24g	X2X3n0PutSNonQQj2cjsCw	5	2014-09-13	It's nice going to a Vietnamese place that's m...	0	0	0
+3440789	1WVMF-nJEPpzEQIyfdtepg	_0TKEDIcuWW5Y4BHo1t24g	Fpm3WvqtrAg2ueh_4pz7iA	5	2014-09-13	Best Thai in Pittsburgh. Love it. Every nood...	0	0	0
+3440790	jFn7vDlzYNMmIrHcOi2jfQ	_0TKEDIcuWW5Y4BHo1t24g	qHseX2NHeUUedIgs_VasZA	5	2014-09-13	Stinks that it's on the South Side, but La Pal...	0	0	0
+3440791	vECPsIAevZ1CWsxgUGdJJA	_0TKEDIcuWW5Y4BHo1t24g	e2zO5THDYoDOcyXcWnQv5w	4	2014-09-13	I've only ever gone late at night for the burg...	0	0	0
+3440792	h645UMBPGzZIhS9hvOsr5A	_0TKEDIcuWW5Y4BHo1t24g	AKQbrvRBZvU5kB9Ut4gVkg	5	2014-09-13	Pretty awesome woodfire pizza. Dig it.	0	0	0
+3440793	K53MwLBFFq0uvaQpa4M0fQ	_0TKEDIcuWW5Y4BHo1t24g	QqbZA4r5g1vCbOxOAKJgWg	5	2014-09-13	Pretty righteous burgers, but they are their o...	0	0	0
+3440794	pdqwqfeIp3IbNx7lcCIejQ	_0TKEDIcuWW5Y4BHo1t24g	u4sTiCzVeIHZY8OlaL346Q	5	2014-09-13	Gigantic amazing sandwiches. Yeah. Freaking ...	0	0	0
+3440795	C7-woP2CtpuVGhfUQaS03Q	_0TKEDIcuWW5Y4BHo1t24g	GPoF-Bubt3r289NpTGAcsw	4	2014-09-13	Better than BRGR, but I thought the mediterra ...	0	0	0
+3440796	7Bw2rM84Z6OSgETXDbNv6g	_0TKEDIcuWW5Y4BHo1t24g	ejaUQ1hYo7Q7xCL1HdPINw	3	2014-09-13	They don't brew a single good beer, menu's ver...	0	0	0
+3440797	mBZE55deqdJbE1W9-1lC5g	_0TKEDIcuWW5Y4BHo1t24g	Bg8xZT4-NsYLYd-WPIhgXw	5	2014-09-13	Great hot dogs and fries and tacos. I love th...	0	0	0
+3440798	n47tbhgxYy0sgk0ZxF7aoQ	_0TKEDIcuWW5Y4BHo1t24g	hcFSc0OHgZJybnjQBrL_8Q	5	2014-09-13	Terrific food, I've eaten there at least a doz...	0	0	0
+3440799	1rfTmOH1pmdnNKt0T9jQZw	_0TKEDIcuWW5Y4BHo1t24g	hUCujBvgttk5jNh_uQwi2Q	4	2014-09-13	It's pretty righteous. I prefer Sola, but I d...	0	0	0
+3440800	cNnRa2lqafBqmznSNdoAPw	_0TKEDIcuWW5Y4BHo1t24g	q-BIBN88JkOXaK2FIlPpuQ	5	2014-09-13	Righteos tacos. Chorizo's my favorite. Thai ...	0	0	0
+3440801	tG7es3zomPAcapzEruvzqg	_0TKEDIcuWW5Y4BHo1t24g	Oy9xDxD-JtUzSurhOhboLg	5	2014-09-13	Awesome freaking waffles. Nutella, speculoos ...	0	0	0
+3440802	Jo-Zu5ZiGrAa9LVMjybPhQ	_0TKEDIcuWW5Y4BHo1t24g	2v3uI97JPebCDaTNy8jdwg	5	2014-09-13	Best NY-style slicery in the Burgh. Love thei...	0	0	0
+3440803	wJEQ8MR8FeFlT1Raei7tUg	_0TKEDIcuWW5Y4BHo1t24g	RvwZqjdkZ_pER0moPXLZAQ	4	2014-09-13	Terrific hotpots. The short rib is really rea...	0	0	0
+3440804	OBP9cDFoPmC_i8WCurtnUQ	_0TKEDIcuWW5Y4BHo1t24g	A4kCvILTgfr_2cG0_yGNiw	5	2014-09-13	Really enjoyed the atmosphere, the Bibimbop, t...	0	0	0
+3440805	q84nwqxuOBJgqFM5aaWSHw	_0TKEDIcuWW5Y4BHo1t24g	AspFf1d9sRaUloPJAHMqAg	5	2014-09-13	Notice the word Kim in the name? That's Korea...	0	0	0
+3440806	k7d-iWOdItuLFEsgbD7Lwg	_0TKEDIcuWW5Y4BHo1t24g	X4YG1pu1MDVSi07S3i4YCA	5	2014-09-13	This is what Chinese takeout should be. This ...	0	0	0
+3440807	tvzcDRCW0XaFFXhJQ4Coeg	_0TKEDIcuWW5Y4BHo1t24g	lKom12WnYEjH5FFemK3M1Q	3	2014-09-13	It's fun to have one of their disgusting sandw...	0	0	0
+3440808	_EXnlz_2pUFb4sYvPTH3BQ	_0TKEDIcuWW5Y4BHo1t24g	z15C-dJodOlPO8bMBl6F8g	5	2014-09-13	Started going there for No Menu Monday. It's ...	0	0	0
+3440809	ulhjp0532vfwXMkcxbxl3A	_0TKEDIcuWW5Y4BHo1t24g	qQvHYQ1uocuEnFcUdhxV_g	5	2014-09-13	The whole menu is pretty righteous. The Rippe...	0	0	0
+3440810	Tkkg2WIOKNX0XOMK3xRfrQ	_0TKEDIcuWW5Y4BHo1t24g	Gm2JaFiMaNDP3RsYociz9w	3	2014-09-13	I thought the fries were pretty good, but I wa...	0	0	0
+3440811	9GgKwNzS1YlVks299exFlA	_0TKEDIcuWW5Y4BHo1t24g	2f90tMt0SFkwBJ6exobY3Q	5	2014-09-13	A lot of people go here for the booze, atmosph...	0	0	0
+3440812	KWhONBEBSPFOqDWlD7Eh6g	_0TKEDIcuWW5Y4BHo1t24g	szlIcLQE7K-1JuKeJIRKsQ	4	2014-09-13	The service is always super friendly there and...	0	0	0
+3440813	0YzcFa4k9flQm-OyXhUsqA	_0TKEDIcuWW5Y4BHo1t24g	2UCXCbv7qaO3d8FfQd4Ing	3	2014-09-13	This is what we order when we deliver. If Aie...	0	0	0
+3440814	ZQs4zTVFJL8pAtbcdrSf9g	_0TKEDIcuWW5Y4BHo1t24g	0PCBt3JKD6IooicImKNBzA	4	2014-09-13	It was good, but expensive and the portions we...	0	0	0
+3440815	K8fS7NS7JLdg880Z8U7Jzw	_0TKEDIcuWW5Y4BHo1t24g	3GuqcEYaF1d1WXcwOX5xPw	4	2014-09-13	A little pricey, but the food's really good. ...	0	0	0
+
+#We can see that this person did more than 20 reviews on 2014-09-13 and most of their reviews were positive, 5 or 4 stars, and the reviews
+are vere generic. This makes them a great candidate for a spammer and I would label their reviews as potential spam. 
+Then I will convert those reviews to tf-idf vectors and measure their cosine similarity with other reviews in the dataset. 
+The ones that have a high review similarity (0.8+ threshold), will be labelled as 'fake'.
+
+#For 'real' reviews I will do the same - except look at low average daily posters and choose their reviews which have lower than 0.3 
+semantic similarity. Those reviews will be labeleld as 'real'.
+
+#Once I generate a new dataframe of 2000 labeled reviews - 1000 with 'fake' label and 1000 with 'real' - will do a simple word cloud
+to check it the words used between two classes are signifiantly different.
+
+from wordcloud import WordCloud, STOPWORDS
+wordcloud = WordCloud(
+                          stopwords=STOPWORDS,
+                          background_color='white',
+                          width=1200,
+                          height=1000
+                         ).generate(" ".join(df.text == 'fake'))
+plt.imshow(wordcloud)
+plt.axis('off')
+plt.show()
+
+#Then I will split the 2000 reviews corpus into 60/20/20 for training/testing/valudation. I will try simple supervised learning models
+like NB, decision tree, KNN and SVM. The top 3 models will be tested on the 20% validation data to produce 1 model winner. 
+The winning model from the 2000 review dataset will be used on the whole 3.5GB reviews dataset and evaluated.
+
+#For pre-processing the text review data in the 2000 reviews dataset, I will use the code below.
+
+stopwords = set(nltk.corpus.stopwords.words("english"))
+tokenizer = nltk.tokenize.RegexpTokenizer(r"[a-z]+") --regex tokenizer that only consider alphabets as token and removes numbers
+stemmer = nltk.stem.PorterStemmer() --initializes the stemmer
+def preprocess(text): --defines a function that preprocess a single text and returns a list of tokens
+    tokens = []
+    for token in tokenizer.tokenize(text.lower()):
+        if len(token)>3 and token not in stopwords:
+            tokens.append(stemmer.stem(token))
+    return tokens
+processed = list(map(preprocess, df.text)) --maybe no list(), but might need for FreqDist 
+
+
+#Calculating the token frequency using FreqDist function - it takes in a list of tokens and returns a dictionary containg unique tokens
+and frequency.
+
+dict_freq = nltk.FreqDist([token for doc in processed for token in doc])
+print("Unique tokens: %d" % fdist.B())
+print("Total tokens: %d" % fdist.N())
+print("Tokens occurred only once: %d" % len(fdist.hapaxes()))
+dict_freq.tabulate(20) --shows top 20 frequent words
+
+
+#Now let's normalize dataset frequency words for clustering.
+
+processed_doc = map(" ".join, processed) --convert list object 'processed' to strings
+vectorizer = TfidfVectorizer(max_df=0.8, stop_words='english')
+X = vectorizer.fit_transform(processed_doc)
+print("n_samples: %d, n_features: %d" % X.shape)
+for loop for average NMI of 10  iterations
+nmis = []
+for i in range(10):
+    km = KMeans(n_clusters=2, max_iter=10, random_state=i)
+    km.fit(X)
+    nmi = float(metrics.normalized_mutual_info_score(dataset.category, km.labels_))
+    nmis.append(nmi)
+    i +=1
+print "The average NMI of 10 iterations: ",  np.mean(nmis)
+ 
+
+#Examine the representative words for each cluster.
+
+order_centroids = km.cluster_centers_.argsort()[:, ::-1]
+terms = vectorizer.get_feature_names()
+for i in range(len(categories)):
+    print("Cluster %d:" % i)
+    for ind in order_centroids[i, :10]:
+        print(' %s' % terms[ind])
+    print
+
+
+#Convert the vectorized data to a gensim corpus object and create a dictionary for index-word mapping
+
+corpus = gensim.matutils.Sparse2Corpus(X, documents_columns=False)
+dictionary = dict((v, k) for k, v in vectorizer.vocabulary_.iteritems())
+
+#Preparation for modeling by using Stratified K-fold because data will be imbalanced, use cross-validation to split data into train
+and test sets.
+
+skf = cross_validation.StratifiedKFold(corpus, n_folds=10) 
+fold = 0
+f1 = [] --container for f1 score
+for train_index, test_index in skf:
+    fold += 1
+    print "Fold %d" % fold
+    train_x, test_x = np.array(processed_doc)[train_index], np.array(processed_doc)[test_index] --partition dataset into train and test
+    train_y, test_y = processed_doc[train_index], processed_doc[test_index] --or dataset.text or corpus or dictionary?
+    vectorizer = TfidfVectorizer(min_df=0.002, stop_words='english') --vectorize
+    X = vectorizer.fit_transform(train_x)
+    print "Number of features: %d" % len(vectorizer.vocabulary_)
+    X_test = vectorizer.transform(test_x)
+ 
+#Train the first model using KNN or NB and run through prediction and results
+algorithm = ....
+model = algorithm.fit(X, train_y)
+pred_y = model.predict(X_test)
+
+#Check classification results
+for line in metrics.classification_report(test_y, pred_y).split("\n"):
+    print line
+f1.append(metrics.f1_score(test_y, pred_y, average='weighted'))
+print "Average F1: %.2f" % np.mean(f1)
