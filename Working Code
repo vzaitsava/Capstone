@@ -4,7 +4,7 @@ Data Analytics Capstone - Ryerson University Detecting Fake Reviews
 #For my capstone analytics project, I'll be using a dataset of Yelp reviews to see if I can identify opinion spam candidates, 
 also known as fake reviews. The data comes from from Kaggle: https://www.kaggle.com/yelp-dataset/yelp-dataset/data called
 'yelp_review.csv', and is 3.53 GB. The size of the dataset presents a challenge, especially because I need to first hand-label 
-training data of 1000 fake and 1000 real reviews.
+training data of fake and real reviews.
 
 #First I import libraries and prepare the environment:
 
@@ -17,8 +17,6 @@ from pandas.tools.plotting import scatter_matrix
 import matplotlib.pyplot as plt
 from pylab import rcParams
 import seaborn as sb
-import dateutil
-import nltk
 from re import sub, compile
 from sklearn import metrics, model_selection
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -27,8 +25,6 @@ from sklearn.svm import SVC
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.preprocessing import normalize
-import gensim
-from gensim.models import LdaModel, LsiModel
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import StratifiedKFold
 from sklearn import metrics, cross_validation
@@ -41,169 +37,73 @@ import os
 rcParams['figure.figsize'] = 5, 4
 sb.set_style('whitegrid')
 
-import logging
-logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
 Now load data from CSV file and check its structure
-In [13]:
-df = pd.read_csv("C:/Users/vzaitsava/Desktop/yelp_review.csv")
-In [14]:
+df = pd.read_csv("C:/Users/vzaitsava/Documents/yelp_review.csv")
 df.columns =['review_id','user_id','business_id','stars','date','text','useful','funny','cool']
-In [15]:
 df.head()
-Out[15]:
+
+Out[]:
 review_id	user_id	business_id	stars	date	text	useful	funny	cool
 0	vkVSCC7xljjrAI4UGfnKEQ	bv2nCi5Qv5vroFiqKGopiw	AEx2SYEUJmTxVVB18LlCwA	5	2016-05-28	Super simple place but amazing nonetheless. It...	0	0	0
 1	n6QzIUObkYshz4dz2QRJTw	bv2nCi5Qv5vroFiqKGopiw	VR6GpWIda3SfvPC-lg9H3w	5	2016-05-28	Small unassuming place that changes their menu...	0	0	0
 2	MV3CcKScW05u5LVfF6ok0g	bv2nCi5Qv5vroFiqKGopiw	CKC0-MOWMqoeWf6s-szl8g	5	2016-05-28	Lester's is located in a beautiful neighborhoo...	0	0	0
 3	IXvOzsEMYtiJI0CARmj77Q	bv2nCi5Qv5vroFiqKGopiw	ACFtxLv8pGrrxMm6EgjreA	4	2016-05-28	Love coming here. Yes the place always needs t...	0	0	0
 4	L_9BTb55X0GDtThi6GlZ6w	bv2nCi5Qv5vroFiqKGopiw	s2I_Ni76bjJNK9yG60iD-Q	4	2016-05-28	Had their chocolate almond croissant and it wa...	0	0	0
-In [24]:
-print(df.info())
-<class 'pandas.core.frame.DataFrame'>
-RangeIndex: 5261668 entries, 0 to 5261667
-Data columns (total 9 columns):
-review_id      object
-user_id        object
-business_id    object
-stars          int64
-date           object
-text           object
-useful         int64
-funny          int64
-cool           int64
-dtypes: int64(4), object(5)
-memory usage: 361.3+ MB
-None
-In [20]:
+
 df['review_id'].count()
-Out[20]:
+Out[]:
 5261668
-In [21]:
+
 df['user_id'].nunique()
-Out[21]:
+Out[]:
 1326101
 
-So the dataset contains 5,261,668 reviews by 1,326,101 reviewers. There are no null values, but let check dates and convert them
-to datetime.
-In [32]:
-df['date'] = df['date'].apply(dateutil.parser.parse, dayfirst=True)
-In [34]:
-print(df.info())
-<class 'pandas.core.frame.DataFrame'>
-RangeIndex: 5261668 entries, 0 to 5261667
-Data columns (total 9 columns):
-review_id      object
-user_id        object
-business_id    object
-stars          int64
-date           datetime64[ns]
-text           object
-useful         int64
-funny          int64
-cool           int64
-dtypes: datetime64[ns](1), int64(4), object(4)
-memory usage: 361.3+ MB
-None
+#So the dataset contains 5,261,668 reviews by 1,326,101 reviewers. There are no missing values.
 
-It worked, now 'date' column is datetime64[ns] type.
-From literature review I found that reviewers who post more than 3-5 times per day are strong candidates for being opinion spammers.
+#From literature review I found that reviewers who post more than 3-5 times per day are strong candidates for being opinion spammers.
 Legitimate reviews rarely post more than 1-2 reviews per day. Therefore I need to group my data by user_id and calculate how many
-times on average they post per day, organizing my new dataframe as follows:
-| user_id | avg_daily_review_rate |
-
+times on average they post per day, organizing my new dataframe as follows: | user_id | avg_daily_review_rate |.
 Then I can identify top frequent daily reviewers and look at their individual reviews more in-depth to see if I can hand-label them
 as fake. After I can look at low daily posters and their reviews, for creating potential 'true' review labels.
-First, calculate reviewer's average daily review rate and save in a pandas Series.
 
-In [75]:
+#First, calculate reviewers' average daily review rate.
+
 users_reviews = df.groupby((['user_id','date']), as_index=False).count()
-avg_daily_review_rate = users_reviews.groupby('user_id')['review_id'].mean()
-
-In [76]:
-avg_daily_review_rate.head()
+adrr = users_reviews.groupby('user_id', as_index=False)['text'].mean()
+adrr.head()
 Out[76]:
-user_id
----1lKK3aKOuomHnwAkAow    2.333333
----94vtJ_5o_nikEs6hUjg    1.000000
----PLwSf5gKdIoVnyRHgBA    1.000000
----cu1hq55BP9DWVXXKHZg    1.000000
----fhiwiwBYrvqhpXgcWDQ    1.000000
-Name: review_id, dtype: float64
+	               user_id      text
+0	---1lKK3aKOuomHnwAkAow	2.333333
+1	---94vtJ_5o_nikEs6hUjg	1.000000
+2	---PLwSf5gKdIoVnyRHgBA	1.000000
+3	---cu1hq55BP9DWVXXKHZg	1.000000
+4	---fhiwiwBYrvqhpXgcWDQ	1.000000
 
-In [82]:
-avg_daily_review_rate.sort_values(ascending=False)
-Out[82]:
-user_id
-_0TKEDIcuWW5Y4BHo1t24g    45.0
-3LW_w3POTvwjl0gY-rHmmw    44.0
-ySM2hhVvRKlEfgw9480yng    38.0
-szUqQBw8Xl5RExjRqTQsoQ    37.0
-JwLgaFivbSO0prsju8H9KQ    34.5
-CqAFnIa7AKD-ey-aCsIN4Q    34.0
-gYzZc_9kk-JJEL1uGIr2AA    34.0
-09_FFRjVsCc7pbqG7MxXyA    32.0
-y81808aeGu5YuZSaDiFC8A    31.0
-iAfBmkVdzVJFz1lprDG2BQ    28.0
-os832o4NXDKxcTYEBN1Mmg    28.0
-Cm3jrFTO6vQghQMc52MDvQ    28.0
-NzdarpPuQ6-U7zjM2qxvbA    26.0
-q5R39EeDXWg32KghCsmBmg    26.0
-vu-TYeqiWnC1duFo4XcWRA    26.0
-iBofWBmQqEnXJAzQVuhS7Q    26.0
-8RcEwGrFIgkt9WQ35E6SnQ    25.0
-_y4oXrnhbWb9h9-SZPOGLA    24.0
--24B_nkBG6Et1_QJecnN2A    24.0
-nj-3QeJ1MiGvird7hG-Nmg    24.0
-XDnlriVXnZgFYXHqphBJ3g    24.0
-4wOcvMLtU6a9Lslggq74Vg    24.0
-l8gCfUNUdO64TtIv71UUaA    23.5
-gVbGtb0ddk3VIF50YGLWug    22.0
-40YlVRxKpRIU06snsXFhiQ    22.0
-UUa4tSTKz90v71BWZF6rnQ    21.0
-LfWuALtU_jW51u7RU8X7rg    21.0
-k2t-xCELlWanDIBPp5oEyg    21.0
-LH7Ri2KjnQoQCfrs5arTTw    21.0
-KbLfnuqdsaIq8lB7vhwAVg    21.0
-                          ... 
-biznPa8rndr30BK-OYQcHA     1.0
-bizd2OBcVFFF1uR_OOYE2Q     1.0
-bizTEzY-RaXBqu4wjwmPsA     1.0
-bizAT0slkN4NUzdNw1C5OQ     1.0
-biz4__BFZQ8Db3R91aU3KA     1.0
-biymfENdbU2ECcgRdRhROw     1.0
-biyeWVagjiV_58pK0SbP3A     1.0
-biybx0ZM6RgAUXlwJ-azkw     1.0
-biyTYBmXrhUlivZOfVTnAQ     1.0
-biy-sCu-kTPavvx_nf9nhg     1.0
-bixMcGuMhcE-XVNfCjrOkQ     1.0
-biwsr4tQi5KzosfnJUN1VA     1.0
-biwb524Z-U_T-L2tgTuBOw     1.0
-biwCpxvPO3xJcqulLMKi4Q     1.0
-bisGnEDxpbRv9eJWoxhisg     1.0
-biw4BWVAoGcEMrq-RhF5CA     1.0
-bivopvZqNN--rT3r5GAfdw     1.0
-bivi7pmYHw2dkI1AIkFn1Q     1.0
-bivVOgXJF90KqVSFmvk7CQ     1.0
-biuo51IR0BgacIz4CvwoYQ     1.0
-biuApxCuCZXKXzlSiOOD8Q     1.0
-biuAj3D0X63QTdtw3oekAA     1.0
-bitsgkDwFMDWeRQnf_72cg     1.0
-bitVX5TsZBJ_fwK33Ee8Eg     1.0
-bitGgg88KE52Pb377hFaJg     1.0
-bisxddcPXgaPie_qGB_VUQ     1.0
-bisivIgJh5FSWojwA8VUWw     1.0
-biscPJtxxNRpex0UHQyWnQ     1.0
-bisPDTTgWOZowY-TrcP4Pw     1.0
-UyeWPntJbCiivtpOkkuEcg     1.0
-Name: review_id, Length: 1326101, dtype: float64
+adrr['text'].sort_values(ascending=False)
+Out[]:
+767544     45.0
+90034      44.0
+1293977    38.0
+1181066    37.0
+433825     34.5
+           ... 
+823671      1.0
+823670      1.0
+823669      1.0
+823668      1.0
+663050      1.0
+Name: text, Length: 1326101, dtype: float64
 
-Top daily poster has 45 reviews/day on average. Lowest are at 1/day. Next I'm going to take a look at the reviews 
-with more than 10 reviews per day to see if I can label their reviews as fake.
+#Top daily poster has 45 reviews/day on average. Lowest are at 1/day. Let's take a look at the reviews of the top daily posting user.
 
-In [83]:
-df[df['user_id'] == '_0TKEDIcuWW5Y4BHo1t24g']
-Out[83]:
-review_id	user_id	business_id	stars	date	text	useful	funny	cool
+adrr[adrr['text'] == 45]
+Out []:
+                       user_id	text
+767544	_0TKEDIcuWW5Y4BHo1t24g	45.0
+
+adrr[adrr['user_id'] == '_0TKEDIcuWW5Y4BHo1t24g']
+Out[]:
+review_id	                      user_id	                business_id	            stars	date	  text	                                        useful funny	cool
 3440771	M6-isJkcNwKyRjWQ0HV5cA	_0TKEDIcuWW5Y4BHo1t24g	NcNzTKVatkbRkD_G8A891A	3	2014-09-13	It's pretty good but a little too pricey. The...	0	0	0
 3440772	S_bAcDjztyHyYj4ectpXfw	_0TKEDIcuWW5Y4BHo1t24g	MtjOk7u7sp3yWyzscAIG4Q	5	2014-09-13	I really like the sandwiches and fries. The p...	0	0	0
 3440773	iIZJykODmOjFvg0SnkyKlQ	_0TKEDIcuWW5Y4BHo1t24g	VxRlBe2wjtycFWSZm1orTA	5	2014-09-13	Love it. It's hard to resist the Fish and Chi...	0	0	0
@@ -250,112 +150,224 @@ review_id	user_id	business_id	stars	date	text	useful	funny	cool
 3440814	ZQs4zTVFJL8pAtbcdrSf9g	_0TKEDIcuWW5Y4BHo1t24g	0PCBt3JKD6IooicImKNBzA	4	2014-09-13	It was good, but expensive and the portions we...	0	0	0
 3440815	K8fS7NS7JLdg880Z8U7Jzw	_0TKEDIcuWW5Y4BHo1t24g	3GuqcEYaF1d1WXcwOX5xPw	4	2014-09-13	A little pricey, but the food's really good. ...	0	0	0
 
-#We can see that this person did more than 20 reviews on 2014-09-13 and most of their reviews were positive, 5 or 4 stars, and the reviews
-are vere generic. This makes them a great candidate for a spammer and I would label their reviews as potential spam. 
-Then I will convert those reviews to tf-idf vectors and measure their cosine similarity with other reviews in the dataset. 
-The ones that have a high review similarity (0.8+ threshold), will be labelled as 'fake'.
+#We can see that this user wrote more than 20 reviews on 2014-09-13 and most of their reviews were positive, 5 or 4 stars,
+and the reviews sounds generic and like they can be interchanged no matter what business is being reviewed. 
+This makes the user a great candidate for a spammer and I would label their reviews as 'fake'. 
 
-#For 'real' reviews I will do the same - except look at low average daily posters and choose their reviews which have lower than 0.3 
-semantic similarity. Those reviews will be labeleld as 'real'.
+#This indicates that it's viable approach to flag fake reviewers based on how frequently they post reviews.
+The reviews of the users who post 2 reviews per day or I will label as 'fake' and the ones with less than 2 reviews on average as 'real'.
 
-#Once I generate a new dataframe of 2000 labeled reviews - 1000 with 'fake' label and 1000 with 'real' - will do a simple word cloud
-to check it the words used between two classes are signifiantly different.
+real = adrr[adrr.text <= 2][:500]
+fake = adrr[adrr.text > 2][:500]
 
-from wordcloud import WordCloud, STOPWORDS
+realReviewsByUser = {}
+for x in real.user_id:
+    realReviewsByUser[x] = df[df.user_id == x].text.tolist()
+
+fakeReviewsByUser = {}
+for x in fake.user_id:
+    fakeReviewsByUser[x] = df[df.user_id == x].text.tolist()
+
+import itertools
+allReals = itertools.chain(list(realReviewsByUser.values()))
+allReals = list(allReals)
+allFakes = itertools.chain(list(fakeReviewsByUser.values()))
+allFakes = list(allFakes)
+
+allReals = [y for x in allReals for y in x]
+allFakes = [y for x in allFakes for y in x]
+
+#Now that I generated labeled reviews, let's do comparison wordclouds to see if words used are signifiantly different.
+
 wordcloud = WordCloud(
                           stopwords=STOPWORDS,
                           background_color='white',
                           width=1200,
                           height=1000
-                         ).generate(" ".join(df.text == 'fake'))
+                         ).generate(" ".join(allFakes))
 plt.imshow(wordcloud)
 plt.axis('off')
 plt.show()
 
-#Then I will split the 2000 reviews corpus into 60/20/20 for training/testing/valudation. I will try simple supervised learning models
-like NB, decision tree, KNN and SVM. The top 3 models will be tested on the 20% validation data to produce 1 model winner. 
-The winning model from the 2000 review dataset will be used on the whole 3.5GB reviews dataset and evaluated.
+wordcloud = WordCloud(
+                          stopwords=STOPWORDS,
+                          background_color='white',
+                          width=1200,
+                          height=1000
+                         ).generate(" ".join(allReals))
+plt.imshow(wordcloud)
+plt.axis('off')
+plt.show()
 
-#For pre-processing the text review data in the 2000 reviews dataset, I will use the code below.
+#The wordclouds are quite similar, in that they both use the words 'good', 'place', 'one', and 'food' the most. 'Time' and 'food' are 
+more common among real reviewers, whereas 'really', 'nice', 'great' are more frequntly used in the fake reviews. This is along the lines
+of previous research that shows that real users tend to be more concrete, whereas fake reviews tend to use flowery adjectives that can
+make any place seem appealing.
 
-stopwords = set(nltk.corpus.stopwords.words("english"))
-tokenizer = nltk.tokenize.RegexpTokenizer(r"[a-z]+") --regex tokenizer that only consider alphabets as token and removes numbers
-stemmer = nltk.stem.PorterStemmer() --initializes the stemmer
-def preprocess(text): --defines a function that preprocess a single text and returns a list of tokens
-    tokens = []
-    for token in tokenizer.tokenize(text.lower()):
-        if len(token)>3 and token not in stopwords:
-            tokens.append(stemmer.stem(token))
-    return tokens
-processed = list(map(preprocess, df.text)) --maybe no list(), but might need for FreqDist 
+#Now I can use the dataset of labelled reviews for training/testing/valudation. I will test 4 simple supervised learning models:
+Linear SVM, SVM, decision tree, and Multinomial Naive Bayes.
 
+realLabel = []
+for x in range(0, len(allReals)):
+    realLabel.append(1)
+fakeLabel = []
+for x in range(0, len(allFakes)):
+    fakeLabel.append(0)
 
-#Calculating the token frequency using FreqDist function - it takes in a list of tokens and returns a dictionary containg unique tokens
-and frequency.
+realDF = pd.DataFrame({'Text': allReals, 'Label': realLabel})
+fakeDF = pd.DataFrame({'Text': allFakes, 'Label': fakeLabel})
 
-dict_freq = nltk.FreqDist([token for doc in processed for token in doc])
-print("Unique tokens: %d" % fdist.B())
-print("Total tokens: %d" % fdist.N())
-print("Tokens occurred only once: %d" % len(fdist.hapaxes()))
-dict_freq.tabulate(20) --shows top 20 frequent words
+dfs = [realDF, fakeDF]
+df_final = pd.concat(dfs)
+df_final = df_final.sample(frac=1).reset_index(drop=True)
 
+labels = df_final.pop('Label')
+features_list = df_final.pop('Text')
+vectorizer = TfidfVectorizer(ngram_range=(1, 2))
+X_ngrams = vectorizer.fit_transform(features_list)
 
-#Now let's normalize dataset frequency words for clustering.
+X_train, X_test, y_train, y_test = train_test_split(
+    X_ngrams,
+    labels,
+    test_size=0.3,
+    random_state=42,
+    stratify=labels
+)
 
-processed_doc = map(" ".join, processed) --convert list object 'processed' to strings
-vectorizer = TfidfVectorizer(max_df=0.8, stop_words='english')
-X = vectorizer.fit_transform(processed_doc)
-print("n_samples: %d, n_features: %d" % X.shape)
-for loop for average NMI of 10  iterations
-nmis = []
-for i in range(10):
-    km = KMeans(n_clusters=2, max_iter=10, random_state=i)
-    km.fit(X)
-    nmi = float(metrics.normalized_mutual_info_score(dataset.category, km.labels_))
-    nmis.append(nmi)
-    i +=1
-print "The average NMI of 10 iterations: ",  np.mean(nmis)
- 
+#First model I look at is LinearSVM.
+clf = LinearSVM(loss='hinge')
+clf.fit(X_train, y_train)
+y_pred = clf.predict(X_test)
+linearSVC_score = metrics.accuracy_score(y_test, y_pred) * 100
+print(linearSVC_score)
 
-#Examine the representative words for each cluster.
+Out []: 
+80.0837111964
 
-order_centroids = km.cluster_centers_.argsort()[:, ::-1]
-terms = vectorizer.get_feature_names()
-for i in range(len(categories)):
-    print("Cluster %d:" % i)
-    for ind in order_centroids[i, :10]:
-        print(' %s' % terms[ind])
-    print
+#Now consider the Multinomial Naive Bayes.
+clf = MultinomialNB()
+clf.fit(X_train, y_train)
+y_pred = clf.predict(X_test)
+MNB_score = metrics.accuracy_score(y_test, y_pred) * 100
+print(MNB_score)
 
+Out []:
+77.9909312871
 
-#Convert the vectorized data to a gensim corpus object and create a dictionary for index-word mapping
+#Compare to SVM model.
+clf = SVM()
+clf.fit(X_train, y_train)
+y_pred = clf.predict(X_test)
+SVC_score = metrics.accuracy_score(y_test, y_pred) * 100
+print(SVC_score)
 
-corpus = gensim.matutils.Sparse2Corpus(X, documents_columns=False)
-dictionary = dict((v, k) for k, v in vectorizer.vocabulary_.iteritems())
+Out []: 
+77.8862922916
 
-#Preparation for modeling by using Stratified K-fold because data will be imbalanced, use cross-validation to split data into train
-and test sets.
+#Last model considered is the Decison Tree classifier.
+clf = DecisionTreeClassifier()
+clf.fit(X_train, y_train)
+y_pred = clf.predict(X_test)
+DCT_score = metrics.accuracy_score(y_test, y_pred) * 100
+print(DCT_score)
 
-skf = cross_validation.StratifiedKFold(corpus, n_folds=10) 
-fold = 0
-f1 = [] --container for f1 score
-for train_index, test_index in skf:
-    fold += 1
-    print "Fold %d" % fold
-    train_x, test_x = np.array(processed_doc)[train_index], np.array(processed_doc)[test_index] --partition dataset into train and test
-    train_y, test_y = processed_doc[train_index], processed_doc[test_index] --or dataset.text or corpus or dictionary?
-    vectorizer = TfidfVectorizer(min_df=0.002, stop_words='english') --vectorize
-    X = vectorizer.fit_transform(train_x)
-    print "Number of features: %d" % len(vectorizer.vocabulary_)
-    X_test = vectorizer.transform(test_x)
- 
-#Train the first model using KNN or NB and run through prediction and results
-algorithm = ....
-model = algorithm.fit(X, train_y)
-pred_y = model.predict(X_test)
+Out []:
+71.3289152424
 
-#Check classification results
-for line in metrics.classification_report(test_y, pred_y).split("\n"):
-    print line
-f1.append(metrics.f1_score(test_y, pred_y, average='weighted'))
-print "Average F1: %.2f" % np.mean(f1)
+#Let's compare the results visually side by side by plotting the model results.
+model_list = ['Linear SVM', 'Naive Bayes', 'SVM', 'Decision Tree']
+values_list = [linearSVC_score, MNB_score, SVC_score, DCT_score]
+plt.bar(algo_list, values_list)
+plt.title = 'Algo Comparison'
+plt.show()
+
+#The Linear SVM model produced the best results.
+
+#Now let's consider the length of reviews.
+import matplotlib.pyplot as plt
+uni_list = adrr.text.unique()
+print(len(uni_list))
+dic_graph = {}
+for z in uni_list:
+        if str(round(z)) in dic_graph: 
+            dic_graph[str(round(z))] += (len(adrr[adrr.text == z]))
+        else:
+            dic_graph[str(round(z))] = (len(adrr[adrr.text == z]))
+print(dic_graph)
+dic_graph['4.0'] = 0
+print(dic_graph)
+
+Out []:
+3980
+{'9.0': 274, '32.0': 1, '1.0': 1114870, '22.0': 2, '3.0': 26030, '2.0': 166257, '18.0': 8, '37.0': 1, '45.0': 1, '10.0': 205, 
+'12.0': 77, '17.0': 17, '38.0': 1, '25.0': 1, '7.0': 883, '16.0': 24, '14.0': 34, '28.0': 3, '24.0': 6, '44.0': 1, '8.0': 588, 
+'5.0': 3563, '15.0': 18, '21.0': 6, '11.0': 132, '34.0': 3, '31.0': 1, '13.0': 44, '26.0': 4, '6.0': 2031, '19.0': 4, '4.0': 11005, 
+'20.0': 6}
+{'9.0': 274, '32.0': 1, '1.0': 1114870, '22.0': 2, '3.0': 26030, '2.0': 166257, '18.0': 8, '37.0': 1, '45.0': 1, '10.0': 205, 
+'12.0': 77, '17.0': 17, '38.0': 1, '25.0': 1, '7.0': 883, '16.0': 24, '14.0': 34, '28.0': 3, '24.0': 6, '44.0': 1, '8.0': 588, 
+'5.0': 3563, '15.0': 18, '21.0': 6, '11.0': 132, '34.0': 3, '31.0': 1, '13.0': 44, '26.0': 4, '6.0': 2031, '19.0': 4, '4.0': 0,
+'20.0': 6}
+
+import itertools
+D2=dict(itertools.islice(dic_graph.items(),10))
+print(D2)
+
+Out[]:
+{'9.0': 274, '32.0': 1, '1.0': 1114870, '22.0': 2, '18.0': 8, '3.0': 26030, '10.0': 205, '45.0': 1, '37.0': 1, '2.0': 166257}
+
+#Each category or key in the dictionary is the average daily review posting number. We can see that most users post 1 review per day
+on average - there are 1,114,870 of them. This is consistent with what we know about spam reviews - most reviews will tend to be real
+(as indicated by infrequent posters). Let's look at this graphically.
+
+import matplotlib.pyplot as plt
+names = list(D2.keys())
+values = list(D2.values())
+plt.bar(range(len(D2)),values,tick_label=names)
+plt.show()
+
+#Now let's look at how we can characterie real user and fake users. 
+import spacy
+nlp = spacy.load('en')
+real_users_df = avg_daily_review_rate[avg_daily_review_rate.text <= 3]
+real_users_df.count()
+real_users_df_truncate = real_users_df[:-1300000] 
+real_users_df_truncate.count()
+
+Out []:
+user_id    5174
+text       5174
+dtype: int64
+
+fake_users_df = avg_daily_review_rate[avg_daily_review_rate.text > 2]
+fake_users_df.count()
+
+Out[]:
+user_id    61380
+text       61380
+dtype: int64
+
+temptest = 0
+avg_res=0
+total = 0
+Real_dic = {}
+similarity_dic = {}
+for x in avg_daily_review_rate['user_id']:
+    if temptest <= 10:
+        temptest+=1
+        count = 0     
+        select_user_reviews = df[df['user_id'] == x]
+        Real_dic[x] = {}
+        total = len(select_user_reviews)
+        review = (select_user_reviews['text'].iloc[0])   
+        for y in range(1,len(select_user_reviews)-1):        
+            labrador = nlp(review)           
+            in_review = nlp(select_user_reviews['text'].iloc[y])
+            count+=float((labrador.similarity(in_review)))        
+        avg_res = count/total
+        if str(round(avg_daily_review_rate[avg_daily_review_rate['user_id'] == x]['text'],1)) in similarity_dic:
+            similarity_dic[str(round(float(avg_daily_review_rate[avg_daily_review_rate['user_id'] == x]['text']),1))] += avg_res
+        else:
+            similarity_dic[str(round(float(avg_daily_review_rate[avg_daily_review_rate['user_id'] == x]['text']),1))] = avg_res
+    else:
+        break
+print(similarity_dic)
