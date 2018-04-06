@@ -235,7 +235,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 #First model I look at is LinearSVM.
-clf = LinearSVM(loss='hinge')
+clf = LinearSVC(loss='hinge')
 clf.fit(X_train, y_train)
 y_pred = clf.predict(X_test)
 linearSVC_score = metrics.accuracy_score(y_test, y_pred) * 100
@@ -255,7 +255,7 @@ Out []:
 77.9909312871
 
 #Compare to SVM model.
-clf = SVM()
+clf = SVC()
 clf.fit(X_train, y_train)
 y_pred = clf.predict(X_test)
 SVC_score = metrics.accuracy_score(y_test, y_pred) * 100
@@ -275,7 +275,7 @@ Out []:
 71.3289152424
 
 #Let's compare the results visually side by side by plotting the model results.
-model_list = ['Linear SVM', 'Naive Bayes', 'SVM', 'Decision Tree']
+algo_list = ['Linear SVM', 'Naive Bayes', 'SVM', 'Decision Tree']
 values_list = [linearSVC_score, MNB_score, SVC_score, DCT_score]
 plt.bar(algo_list, values_list)
 plt.title = 'Algo Comparison'
