@@ -325,7 +325,7 @@ values = list(D2.values())
 plt.bar(range(len(D2)),values,tick_label=names)
 plt.show()
 
-#Now let's look at how we can characterie real user and fake users. 
+#Now let's look at how we can characterize real user and fake users. 
 import spacy
 nlp = spacy.load('en')
 real_users_df = avg_daily_review_rate[avg_daily_review_rate.text <= 3]
