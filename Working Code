@@ -275,10 +275,9 @@ Out []:
 71.3289152424
 
 #Let's compare the results visually side by side by plotting the model results.
-algo_list = ['Linear SVM', 'Naive Bayes', 'SVM', 'Decision Tree']
+model_list = ['Linear SVM', 'Naive Bayes', 'SVM', 'Decision Tree']
 values_list = [linearSVC_score, MNB_score, SVC_score, DCT_score]
-plt.bar(algo_list, values_list)
-plt.title = 'Algo Comparison'
+plt.bar(model_list, values_list)
 plt.show()
 
 #The Linear SVM model produced the best results.
