@@ -3,7 +3,7 @@ Data Analytics Capstone - Ryerson University Detecting Fake Reviews
 
 #For my capstone analytics project, I'll be using a dataset of Yelp reviews to see if I can identify opinion spam candidates, 
 also known as fake reviews. The data comes from from Kaggle: https://www.kaggle.com/yelp-dataset/yelp-dataset/data called
-'yelp_review.csv', and is 3.53 GB. The size of the dataset presents a challenge, especially because I need to first hand-label 
+'yelp_review.csv', and is 3.53 GB. The size of the dataset presents a challenge, especially because I need to first manually label 
 training data of fake and real reviews.
 
 #First I import libraries and prepare the environment:
@@ -345,29 +345,3 @@ Out[]:
 user_id    61380
 text       61380
 dtype: int64
-
-temptest = 0
-avg_res=0
-total = 0
-Real_dic = {}
-similarity_dic = {}
-for x in avg_daily_review_rate['user_id']:
-    if temptest <= 10:
-        temptest+=1
-        count = 0     
-        select_user_reviews = df[df['user_id'] == x]
-        Real_dic[x] = {}
-        total = len(select_user_reviews)
-        review = (select_user_reviews['text'].iloc[0])   
-        for y in range(1,len(select_user_reviews)-1):        
-            labrador = nlp(review)           
-            in_review = nlp(select_user_reviews['text'].iloc[y])
-            count+=float((labrador.similarity(in_review)))        
-        avg_res = count/total
-        if str(round(avg_daily_review_rate[avg_daily_review_rate['user_id'] == x]['text'],1)) in similarity_dic:
-            similarity_dic[str(round(float(avg_daily_review_rate[avg_daily_review_rate['user_id'] == x]['text']),1))] += avg_res
-        else:
-            similarity_dic[str(round(float(avg_daily_review_rate[avg_daily_review_rate['user_id'] == x]['text']),1))] = avg_res
-    else:
-        break
-print(similarity_dic)
