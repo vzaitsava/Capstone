@@ -275,8 +275,8 @@ Out []:
 71.3289152424
 
 #Let's compare the results visually side by side by plotting the model results.
-model_list = ['Linear SVM', 'Naive Bayes', 'SVM', 'Decision Tree']
-values_list = [linearSVC_score, MNB_score, SVC_score, DCT_score]
+model_list = ['Decision Tree', 'Linear SVM', 'Naive Bayes', 'SVM']
+values_list = [DCT_score, linearSVC_score, MNB_score, SVC_score]
 plt.bar(model_list, values_list)
 plt.show()
 
